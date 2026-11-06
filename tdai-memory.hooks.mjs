@@ -10,7 +10,7 @@
 // same user message on every later request of the session, so the history
 // an agent sends stays byte for byte what it was and its cache holds.
 
-import { KernelError, block, capture, config, cut, hash, recall, scope } from "./lib.mjs"
+import { KernelError, block, capture, config, cut, hash, matchRole, recallScopes, scope, wikiSearch } from "./lib.mjs"
 
 const SESSIONS_MAX = 300
 const TURNS_MAX = 500
@@ -51,8 +51,11 @@ export async function onRequest(body, ctx) {
   if (!target) return void ctx.report("skipped")
   const fp = hash(target.text)
   const s = sessionOf(`${ctx.agent}:${ctx.session || "-"}`)
-  const sc = scope(o, ctx.agent)
-  ctx.state.turn = { fp, query: query || stripReminders(target.text), sc }
+  const q = query || stripReminders(target.text)
+  const role = matchRole(o, { cwd: ctx.cwd, query: q })
+  const shared = scope(o, ctx.agent)
+  const sc = scope(o, ctx.agent, role?.agentId)
+  ctx.state.turn = { fp, query: q, sc }
 
   let changed = false, bytes = 0, failed = false
   if (o.recall) {
@@ -69,8 +72,11 @@ export async function onRequest(body, ctx) {
       e = { block: "", pending: null, failedAt: 0 }
       s.entries.set(fp, e)
       trim(s.entries)
-      e.pending = recall(o, sc, ctx.state.turn.query, ctx.signal)
-        .then((r) => { e.block = block(r, o.maxInjectChars); e.failedAt = 0 })
+      e.pending = Promise.all([
+        recallScopes(o, [shared, sc], ctx.state.turn.query, ctx.signal),
+        wikiSearch(o, ctx.state.turn.query, ctx.signal).catch(() => []),
+      ])
+        .then(([r, wiki]) => { e.block = block({ ...r, wiki, role: role?.name }, o.maxInjectChars); e.failedAt = 0 })
         .catch((err) => { e.failedAt = Date.now(); throw err })
         .finally(() => { e.pending = null })
     }

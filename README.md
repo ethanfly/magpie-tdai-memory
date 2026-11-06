@@ -58,7 +58,10 @@ A change reloads the plugin. Keys left out take the defaults below.
 | `recall` | `true` | put the recall before each turn |
 | `capture` | `false` | save each finished turn to L0 |
 | `remote` | `false` | serve other gateway keys, remote and unknown origins too: they then read this memory and, with `capture`, add to it |
-| `tools` | `false` | give agents the `search`, `read_scene` and `remember` tools (see [Tools](#tools)) |
+| `knowledgeUrl` | `http://127.0.0.1:8424` | the Knowledge service, for the wiki and code-graph tools |
+| `knowledgeKey` | empty | its Bearer token. Empty leaves those tools unable to call it |
+| `wikiId` | empty | the wiki `wiki_search` and `wiki_read` use. Empty leaves them off |
+| `tools` | `false` | give agents the memory, wiki and code-graph tools below |
 | `requireTools` | `true` | skip requests that carry no tools |
 | `recallLimit` | `5` | L1 memories a recall takes (1–20) |
 | `maxInjectChars` | `6000` | the block's limit in characters (500–32000) |
@@ -74,6 +77,8 @@ Off until `tools` is on. magpie then serves them on its MCP server to every agen
 - `search {query, limit?, conversations?}`: L1 memories, and raw L0 conversations with `conversations`
 - `read_scene {path}`: one L2 scene, by a path the recalled `<scenes>` list gives
 - `remember {content, project?}`: adds it to L0; it can be recalled once the kernel has extracted it
+- `wiki_search {query}` and `wiki_read {ref}`: the team wiki, when `wikiId` is set
+- `code_explore {query, maxFiles?, repo?}`, `code_search {query, kind?, limit?, repo?}`, `code_callers {symbol, limit?, repo?}`, `code_callees {symbol, limit?, repo?}`, `code_impact {symbol, depth?, repo?}`: read-only queries against the code graph for the working directory's repo (pass `repo` — a folder name or `code_graph_id` — when it isn't). Nothing is indexed or changed from here.
 
 Their names start with the plugin's short name: `gateway-tdai-memory_search` and so on from the catalog; a plugin added from a folder takes the folder's name (e.g. `magpie-tdai-memory_search`). Behind magpie's MCP router an agent sees `<short name>__search`. `magpie plugin` lists them, and `magpie tool <name> --query …` calls one.
 
@@ -160,7 +165,10 @@ magpie plugin options @magpie-community/gateway-tdai-memory '{"userId":"you","ca
 | `recall` | `true` | 每轮召回并插入记忆 |
 | `capture` | `false` | 每轮结束后写入 L0 |
 | `remote` | `false` | 同时服务其他 gateway key、远程请求和来源不明的请求：它们将能读取这份记忆，开启 `capture` 时还会写入 |
-| `tools` | `false` | 向 agent 提供 `search`、`read_scene`、`remember` 工具（见下文“工具”） |
+| `knowledgeUrl` | `http://127.0.0.1:8424` | Knowledge 服务地址，wiki 和 code graph 工具用它 |
+| `knowledgeKey` | 空 | 该服务的 Bearer token。为空时这些工具无法调用 |
+| `wikiId` | 空 | `wiki_search` 和 `wiki_read` 使用的知识库。为空时这两个工具不可用 |
+| `tools` | `false` | 向 agent 提供下面的记忆、wiki 和 code graph 工具 |
 | `requireTools` | `true` | 跳过不带 tools 的请求 |
 | `recallLimit` | `5` | 每次召回的 L1 条数（1–20） |
 | `maxInjectChars` | `6000` | 注入块的字符上限（500–32000） |
@@ -176,6 +184,8 @@ magpie plugin options @magpie-community/gateway-tdai-memory '{"userId":"you","ca
 - `search {query, limit?, conversations?}`：检索 L1 记忆；`conversations` 为 true 时同时检索 L0 原始对话
 - `read_scene {path}`：按召回的 `<scenes>` 列表中的路径读取一个 L2 场景
 - `remember {content, project?}`：写入 L0，内核抽取之后才能被召回
+- `wiki_search {query}`、`wiki_read {ref}`：团队知识库，需配置 `wikiId`
+- `code_explore {query, maxFiles?, repo?}`、`code_search {query, kind?, limit?, repo?}`、`code_callers {symbol, limit?, repo?}`、`code_callees {symbol, limit?, repo?}`、`code_impact {symbol, depth?, repo?}`：对当前工作目录所在仓库的 code graph 做只读查询（目录对不上时用 `repo` 指定文件夹名或 `code_graph_id`）。这里不能建索引，也不能改图。
 
 工具名以插件短名开头：从插件库安装时为 `gateway-tdai-memory_search` 等；从文件夹安装时取文件夹名（例如 `magpie-tdai-memory_search`）。经 magpie 的 MCP 路由时，agent 看到的是 `<短名>__search`。`magpie plugin` 会列出全部工具，`magpie tool <工具名> --query …` 可以直接调用。
 

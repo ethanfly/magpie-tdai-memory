@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { onRequest, onResponse } from "./tdai-memory.hooks.mjs"
 import plugin from "./index.mjs"
-import { block, config } from "./lib.mjs"
+import { block, cgMatch, config, matchRole } from "./lib.mjs"
 
 const calls = []
 let down = false
@@ -25,6 +25,18 @@ before(async () => {
         "conversation/add": { accepted_ids: ["m1", "m2"], total_count: 2 },
         "conversation/search": { messages: [] },
         "scenario/read": { content: "# deploy flow" },
+        "code-graph/list": {
+          items: [
+            { code_graph_id: "cg-work-b2b_backend", repo_name: "b2b_backend", repo_url: "https://git.example/b2b_backend.git", status: "ready" },
+            { code_graph_id: "cg-work-todo", repo_name: "todo", status: "ready" },
+            { code_graph_id: "cg-work-dead", repo_name: "dead", status: "failed" },
+          ],
+        },
+        "code-graph/explore": { text: body.query === "boom" ? "indexer down" : "explore hit", isError: body.query === "boom" },
+        "code-graph/search": { text: "search hit", isError: false },
+        "code-graph/callers": { text: "callers hit", isError: false },
+        "code-graph/callees": { text: "callees hit", isError: false },
+        "code-graph/impact": { text: "impact hit", isError: false },
       }[path] ?? {}
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify({ code: 0, message: "ok", data }))
@@ -182,7 +194,7 @@ test("the tools are there only once the options turn them on", async () => {
   // a tool call carries no origin: anyone reaching magpie's tools server could use them
   for (const options of [{ url }, { url, tools: "yes" }, { url, tools: false }, undefined])
     assert.equal((await plugin({ magpie: { options: () => ({}) } }, options)).tool, undefined, JSON.stringify(options))
-  assert.deepEqual(Object.keys((await plugin({}, { url, tools: "true" })).tool), ["search", "read_scene", "remember"])
+  assert.deepEqual(Object.keys((await plugin({}, { url, tools: "true" })).tool), ["search", "read_scene", "remember", "wiki_search", "wiki_read", "code_explore", "code_search", "code_callers", "code_callees", "code_impact"])
 })
 
 test("a switch is true or false: a stray value keeps the default", () => {
@@ -226,4 +238,71 @@ test("only this computer's own agents are served unless remote is on", async () 
   assert.match(out.messages[0].content[0].text, /<tdai-memory/)
   assert.ok(await onRequest(structuredClone(b), ctx({ session: "s8", origin: "magpie-key" })), "the sharing key magpie writes into this computer's agents")
   assert.ok(await onRequest(structuredClone(b), ctx({ session: "s9", origin: "local" })))
+})
+
+test("a turn is matched to a role agent, and the shared agent stays the fallback", () => {
+  const roles = [
+    { name: "发布部署", agentId: "agt-release", words: ["发版", "deploy"] },
+    { name: "开发", agentId: "agt-dev", when: "repo" },
+    { name: "日常助手", agentId: "agt-daily", fallback: true },
+  ]
+  const o = config({ roles, workRoots: ["/home/ethan/Work"] })
+  assert.equal(matchRole(o, { query: "帮我发版" }).agentId, "agt-release")
+  assert.equal(matchRole(o, { cwd: "/home/ethan/Work/b2b_backend", query: "看一下这个接口" }).name, "开发")
+  assert.equal(matchRole(o, { cwd: "/tmp", query: "今天天气" }).name, "日常助手")
+  assert.equal(matchRole(config({}), { query: "发版" }), null)
+})
+
+test("a code graph is chosen from the working directory, and an explicit repo wins", () => {
+  const items = [
+    { code_graph_id: "cg-slow", repo_name: "lib", status: "processing" },
+    { code_graph_id: "cg-fast", repo_name: "lib", status: "ready" },
+    { code_graph_id: "cg-app", repo_name: "app", repo_url: "https://git.example/app.git", status: "ready" },
+    { code_graph_id: "cg-old", repo_name: "legacy", repo_url: "git@h:old.git", status: "pending" },
+    { code_graph_id: "cg-dead", repo_name: "app", status: "failed" },
+  ]
+  assert.equal(cgMatch(items, "/work/lib").code_graph_id, "cg-fast", "a ready graph beats one still indexing")
+  assert.equal(cgMatch(items, "/work/app").code_graph_id, "cg-app", "a failed graph never matches")
+  assert.equal(cgMatch(items, "/somewhere/old").code_graph_id, "cg-old", "the repo url's last segment")
+  assert.equal(cgMatch(items, "/work/app", "cg-old").code_graph_id, "cg-old", "an explicit id wins over the directory")
+  assert.equal(cgMatch(items, "/work/app", "legacy").code_graph_id, "cg-old")
+  assert.equal(cgMatch(items, "/tmp/nope"), null)
+  assert.equal(cgMatch(items, "", "missing"), null)
+})
+
+test("code tools query the graph for the current repo", async () => {
+  const off = await plugin({}, { url, tools: true })
+  assert.match(await off.tool.code_explore.execute({ query: "refund" }, { cwd: "/work/b2b_backend" }), /not configured/)
+  const { tool } = await plugin({}, { url, knowledgeUrl: url, knowledgeKey: "k", tools: true, teamId: "team-cg" })
+  calls.length = 0
+  assert.equal(await tool.code_explore.execute({ query: "  " }, { cwd: "/work/b2b_backend" }), "query is empty")
+  assert.equal(calls.length, 0, "an empty query never asks the service")
+  assert.equal(await tool.code_explore.execute({ query: "refund", maxFiles: "8" }, { cwd: "/home/ethan/Work/b2b_backend" }), "explore hit")
+  const explore = calls.find((c) => c.path === "code-graph/explore")
+  assert.equal(explore.body.code_graph_id, "cg-work-b2b_backend")
+  assert.equal(explore.body.query, "refund")
+  assert.equal(explore.body.maxFiles, 8)
+  assert.equal(explore.auth, "Bearer k")
+  calls.length = 0
+  assert.equal(await tool.code_search.execute({ query: "Refund", repo: "todo", kind: "function", limit: "5" }, { cwd: "/work/b2b_backend" }), "search hit")
+  const search = calls.find((c) => c.path === "code-graph/search")
+  assert.equal(search.body.code_graph_id, "cg-work-todo", "repo overrides the directory")
+  assert.deepEqual(search.body, { code_graph_id: "cg-work-todo", query: "Refund", kind: "function", limit: 5 })
+  assert.match(await tool.code_search.execute({ query: "Refund", kind: "any" }, { cwd: "/work/todo" }), /unknown kind/)
+  calls.length = 0
+  assert.equal(await tool.code_callers.execute({ symbol: "pay", repo: "cg-work-todo" }, {}), "callers hit")
+  assert.equal(calls.at(-1).body.code_graph_id, "cg-work-todo")
+  assert.equal(calls.at(-1).body.symbol, "pay")
+  assert.equal(calls.at(-1).body.limit, undefined)
+  assert.equal(await tool.code_callees.execute({ symbol: "pay" }, { cwd: "/work/todo" }), "callees hit")
+  assert.equal(await tool.code_impact.execute({ symbol: "pay", depth: "3" }, { cwd: "/work/todo" }), "impact hit")
+  assert.equal(calls.at(-1).body.depth, 3)
+  assert.equal(await tool.code_impact.execute({ symbol: "pay", depth: "99" }, { cwd: "/work/todo" }), "impact hit")
+  assert.equal(calls.at(-1).body.depth, undefined, "an out-of-range depth is left to the service default")
+  const miss = await tool.code_explore.execute({ query: "x" }, { cwd: "/tmp/nope" })
+  assert.match(miss, /no code graph matches/)
+  assert.match(miss, /b2b_backend/)
+  assert.match(miss, /todo/)
+  assert.doesNotMatch(miss, /dead/)
+  assert.match(await tool.code_explore.execute({ query: "boom" }, { cwd: "/work/todo" }), /tool failed: indexer down/)
 })
