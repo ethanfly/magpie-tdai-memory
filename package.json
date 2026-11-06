@@ -22,6 +22,7 @@
       "recall": true,
       "capture": false,
       "remote": false,
+      "tools": false,
       "requireTools": true,
       "recallLimit": 5,
       "maxInjectChars": 6000,

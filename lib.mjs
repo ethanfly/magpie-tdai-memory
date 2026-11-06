@@ -13,6 +13,7 @@ export const DEFAULTS = {
   recall: true,
   capture: false,
   remote: false,
+  tools: false,
   requireTools: true,
   recallLimit: 5,
   maxInjectChars: 6000,
@@ -21,10 +22,15 @@ export const DEFAULTS = {
 
 export const MAX_MESSAGE_CHARS = 8000 // the kernel takes 1–8192 per message
 
+// the switches: true or false, or the text "true"/"false"; anything else is
+// the default, so a stray value never turns capture, remote or the tools on
+const FLAGS = ["perAgent", "recall", "capture", "remote", "tools", "requireTools", "includeCwd"]
+
 export function config(options) {
   const o = { ...DEFAULTS, ...(options && typeof options === "object" ? options : {}) }
   o.url = String(o.url || DEFAULTS.url).replace(/\/+$/, "")
   if (!Array.isArray(o.agents)) o.agents = DEFAULTS.agents
+  for (const k of FLAGS) o[k] = flag(o[k], DEFAULTS[k])
   o.recallLimit = clampInt(o.recallLimit, 1, 20, DEFAULTS.recallLimit)
   o.maxInjectChars = clampInt(o.maxInjectChars, 500, 32000, DEFAULTS.maxInjectChars)
   return o
@@ -33,6 +39,13 @@ export function config(options) {
 function clampInt(v, lo, hi, d) {
   const n = Number(v)
   return Number.isInteger(n) ? Math.min(hi, Math.max(lo, n)) : d
+}
+
+function flag(v, d) {
+  if (typeof v === "boolean") return v
+  if (v === "true") return true
+  if (v === "false") return false
+  return d
 }
 
 // scope is the kernel's isolation triple. One agent_id for every agent is
@@ -107,11 +120,11 @@ export async function recall(o, sc, query, signal) {
 export function block(r, max) {
   const parts = []
   if (r.atoms.length) {
-    parts.push("<relevant-memories>\n" + r.atoms.map((m) => `- [${m.type || "memory"}] ${oneLine(m.content)}`).join("\n") + "\n</relevant-memories>")
+    parts.push("<relevant-memories>\n" + r.atoms.map((m) => `- [${oneLine(m.type) || "memory"}] ${oneLine(m.content)}`).join("\n") + "\n</relevant-memories>")
   }
-  if (r.core.trim()) parts.push("<core>\n" + cut(r.core.trim(), Math.floor(max / 3)) + "\n</core>")
+  if (r.core.trim()) parts.push("<core>\n" + cut(inert(r.core.trim()), Math.floor(max / 3)) + "\n</core>")
   if (r.scenes.length) {
-    const lines = r.scenes.slice(0, 15).map((s) => `- ${s.path}${s.summary ? `: ${oneLine(s.summary)}` : ""}`)
+    const lines = r.scenes.slice(0, 15).map((s) => `- ${oneLine(s.path)}${s.summary ? `: ${oneLine(s.summary)}` : ""}`)
     parts.push("<scenes hint=\"this plugin's read_scene tool reads one\">\n" + lines.join("\n") + "\n</scenes>")
   }
   if (!parts.length) return ""
@@ -120,7 +133,14 @@ export function block(r, max) {
 }
 
 function oneLine(s) {
-  return String(s ?? "").replace(/\s+/g, " ").trim()
+  return inert(String(s ?? "").replace(/\s+/g, " ").trim())
+}
+
+// inert keeps recalled text from opening or closing the elements it is put
+// in: a memory that quotes them (talk about this plugin, a page an agent
+// read) stays reference inside the block, never words after it
+function inert(s) {
+  return String(s).replace(/<(?=\/?\s*(?:tdai-memory|relevant-memories|core|scenes)\b)/gi, "&lt;")
 }
 
 export function cut(s, n) {

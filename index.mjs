@@ -1,6 +1,10 @@
 // The plugin's tools: magpie offers them to every agent through its plugin
 // tools MCP server, so an agent whose model isn't served by magpie (Gemini
 // CLI, Cursor, Copilot…) still reads and adds to the same memory.
+//
+// Unlike the requests the gateway hook sees, a tool call carries no origin,
+// and magpie serves plugin tools to other computers that hold a gateway key
+// as well. So there are no tools until the options turn them on.
 
 import { KernelError, call, capture, config, cut, scope } from "./lib.mjs"
 
@@ -8,8 +12,10 @@ import { KernelError, call, capture, config, cut, scope } from "./lib.mjs"
 // the same the gateway hook is handed as ctx.options (input.magpie.options is
 // a provider's sign-in switches, not these); a change reloads the plugin.
 export default async function tdaiMemory(input, options) {
-  const opts = () => config(options)
+  const o = config(options)
+  if (!o.tools) return {}
   const fail = (e) => (e instanceof KernelError ? `memory-core ${e.kind} (${e.status})` : `memory-core error: ${e?.message ?? e}`)
+  const list = (v) => (Array.isArray(v) ? v : [])
   return {
     tool: {
       search: {
@@ -24,19 +30,21 @@ export default async function tdaiMemory(input, options) {
           required: ["query"],
         },
         async execute(args, ctx) {
-          const o = opts()
-          const sc = scope(o, ctx?.agent)
           const q = String(args?.query ?? "").trim().slice(0, 2048)
           if (!q) return "query is empty"
-          const limit = Math.min(20, Math.max(1, Number.isInteger(args?.limit) ? args.limit : 5))
+          // magpie hands the arguments on as they came: a number or a switch may be text
+          const n = Number(args?.limit)
+          const limit = Number.isInteger(n) && n > 0 ? Math.min(20, n) : 5
+          const conversations = args?.conversations === true || args?.conversations === "true"
+          const sc = scope(o, ctx?.agent)
           try {
             const [l1, l0] = await Promise.all([
               call(o, "atomic/search", { ...sc, query: q, limit }, ctx?.abort),
-              args?.conversations ? call(o, "conversation/search", { ...sc, query: q, limit }, ctx?.abort) : null,
+              conversations ? call(o, "conversation/search", { ...sc, query: q, limit }, ctx?.abort) : null,
             ])
             const out = []
-            for (const m of l1?.items ?? []) out.push(`- [${m.type}] ${m.content}${m.updated_at ? ` (${m.updated_at.slice(0, 10)})` : ""}`)
-            if (l0) for (const m of l0.messages ?? []) out.push(`- [conversation ${m.role} ${String(m.timestamp ?? "").slice(0, 10)} ${m.session_id ?? ""}] ${cut(m.content, 600)}`)
+            for (const m of list(l1?.items)) out.push(`- [${m?.type}] ${m?.content}${m?.updated_at ? ` (${String(m.updated_at).slice(0, 10)})` : ""}`)
+            for (const m of list(l0?.messages)) out.push(`- [conversation ${m?.role} ${String(m?.timestamp ?? "").slice(0, 10)} ${m?.session_id ?? ""}] ${cut(m?.content, 600)}`)
             return out.length ? out.join("\n") : "nothing found"
           } catch (e) {
             return fail(e)
@@ -44,13 +52,16 @@ export default async function tdaiMemory(input, options) {
         },
       },
       read_scene: {
-        description: "Read one scene file (L2) of the shared memory, by the path the recalled <scenes> list gives.",
-        args: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+        description: "Read one scene file (L2) of the shared memory, by the path the recalled <scenes> list gives (the core's scene_blocks/… paths work too).",
+        args: { type: "object", properties: { path: { type: "string", description: "a path from the <scenes> list, such as deploy.md" } }, required: ["path"] },
         async execute(args, ctx) {
-          const o = opts()
+          // the kernel's L3 core names scenes by their file under scene_blocks/;
+          // scenario/read takes the name inside it, as scenario/ls lists it
+          const path = String(args?.path ?? "").trim().replace(/^(?:.*\/)?scene_blocks\//, "")
+          if (!path) return "path is empty"
           try {
-            const d = await call(o, "scenario/read", { ...scope(o, ctx?.agent), path: String(args?.path ?? "") }, ctx?.abort)
-            return d?.content ?? "no such scene"
+            const d = await call(o, "scenario/read", { ...scope(o, ctx?.agent), path }, ctx?.abort)
+            return typeof d?.content === "string" ? d.content : "no such scene"
           } catch (e) {
             return fail(e)
           }
@@ -67,11 +78,11 @@ export default async function tdaiMemory(input, options) {
           required: ["content"],
         },
         async execute(args, ctx) {
-          const o = opts()
           const content = String(args?.content ?? "").trim()
           if (!content) return "content is empty"
           const agent = ctx?.agent || "agent"
-          const about = args?.project ? ` about ${args.project}` : ""
+          const project = String(args?.project ?? "").trim()
+          const about = project ? ` about ${project}` : ""
           try {
             await capture(o, scope(o, ctx?.agent), `remember:${agent}`, `Remember this${about}: ${content}`, "Noted.", ctx?.abort)
             return "saved to L0; it becomes a recallable memory once the kernel's pipeline runs"

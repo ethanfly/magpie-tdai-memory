@@ -41,7 +41,7 @@ export async function onRequest(body, ctx) {
   // someone else's requests neither read nor add to this memory unless asked for
   if (!o.remote && !OWN.has(ctx.origin)) return void ctx.report("skipped")
   // side requests (titles, summaries, classifiers) carry no tools
-  if (o.requireTools !== false && !hasTools(body)) return void ctx.report("skipped")
+  if (o.requireTools && !hasTools(body)) return void ctx.report("skipped")
   const msgs = userMessages(body, ctx.protocol)
   if (!msgs.length) return void ctx.report("skipped")
 
