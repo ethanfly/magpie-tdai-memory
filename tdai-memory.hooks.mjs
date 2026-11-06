@@ -13,7 +13,7 @@
 import { KernelError, block, capture, config, cut, hash, recall, scope } from "./lib.mjs"
 
 const SESSIONS_MAX = 300
-const TURNS_MAX = 200
+const TURNS_MAX = 500
 const RETRY_AFTER_MS = 60_000
 const sessions = new Map() // key → {entries: Map<fp, entry>, turns: Map<fp, turn>}
 // the user's own requests: direct local ones, and the sharing key magpie
@@ -56,6 +56,14 @@ export async function onRequest(body, ctx) {
 
   let changed = false, bytes = 0, failed = false
   if (o.recall) {
+    const fps = msgs.map((m) => hash(m.text))
+    // an entry whose message has left the request's history can never be
+    // applied again (the agent dropped it, e.g. after a compaction): free it,
+    // so the cache follows the live history and trim can only ever drop what
+    // the session has abandoned
+    const live = new Set(fps)
+    for (const k of s.entries.keys()) if (!live.has(k)) s.entries.delete(k)
+
     let e = s.entries.get(fp)
     if (!e || (e.failedAt && Date.now() - e.failedAt > RETRY_AFTER_MS)) {
       e = { block: "", pending: null, failedAt: 0 }
@@ -74,13 +82,17 @@ export async function onRequest(body, ctx) {
         ctx.report(err instanceof KernelError ? err.kind : "unavailable")
       }
     }
-    // every user message whose turn had a recall gets it again, the current one too
-    for (const m of msgs) {
-      const b = s.entries.get(hash(m.text))?.block
-      if (!b) continue
-      m.prepend(b)
+    // every user message whose turn had a recall gets it again, the current
+    // one too; each use gives its entry a fresh LRU position, so a message a
+    // session still sends never ages out while new turns keep arriving
+    for (let i = 0; i < msgs.length; i++) {
+      const en = s.entries.get(fps[i])
+      if (!en?.block) continue
+      s.entries.delete(fps[i]) // in use: not old
+      s.entries.set(fps[i], en)
+      msgs[i].prepend(en.block)
       changed = true
-      if (m === target) bytes = Buffer.byteLength(b)
+      if (msgs[i] === target) bytes = Buffer.byteLength(en.block)
     }
   }
   if (changed) {

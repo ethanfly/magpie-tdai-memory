@@ -81,6 +81,23 @@ test("a new turn recalls again and the earlier turn keeps its own block", async 
   assert.equal(calls.filter((c) => c.path === "atomic/search").length, 1)
 })
 
+test("a long session keeps every history block: in-use entries never age out", async () => {
+  calls.length = 0
+  const c = ctx({ session: "s10" })
+  const msgs = []
+  let out
+  for (let i = 0; i < 210; i++) {
+    msgs.push({ role: "user", content: `question number ${i}` })
+    if (i) msgs.push({ role: "assistant", content: "ok" })
+    out = await onRequest(structuredClone({ model: "m", tools, messages: msgs }), c)
+  }
+  // past the old 200-entry cap, the first turn's entry used to be evicted and
+  // its block silently dropped from the history the session still sends
+  assert.match(out.messages[0].content, /^<tdai-memory/)
+  assert.equal(out.messages.filter((m) => m.role === "user").every((m) => m.content.startsWith("<tdai-memory")), true)
+  assert.equal(calls.filter((x) => x.path === "atomic/search").length, 210, "one recall per new turn, none for history")
+})
+
 test("other agents and side requests are left alone", async () => {
   calls.length = 0
   assert.equal(await onRequest({ tools, messages: [structuredClone(prompt)] }, ctx({ agent: "node" })), undefined)

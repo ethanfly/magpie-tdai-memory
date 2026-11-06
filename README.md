@@ -21,7 +21,7 @@ Gemini CLI · Cursor · Copilot …  (models not served by magpie)
 ## What it does
 
 - **Recall, once a turn.** `atomic/search` (L1 memories, with the turn's text as the query), `core/read` (the L3 core) and `scenario/ls` (the L2 scene list) are asked side by side, as TDAI's own Hermes adapter does, and put together as one `<tdai-memory>` block at the start of the turn's user message (after any tool results).
-- **Keeps the prompt cache.** Each turn's block is kept for its session and put back in the same place on every later request, so the history an agent sends stays byte for byte the same. Reloading the plugin (an options change, a magpie restart) empties it: the turns before then go without their block, one cache miss.
+- **Keeps the prompt cache.** Each turn's block is kept for its session and put back in the same place on every later request, so the history an agent sends stays byte for byte the same. Reloading the plugin (an options change, a magpie restart) empties it: the turns before then go without their block, one cache miss. A failed recall is retried after a minute: a turn that runs longer than that gets its block late, the only other time history bytes change.
 - **Capture, when you turn it on.** The text replies of a turn's tool loop are collected; once the turn ends (`end_turn`, no tool call waiting) the user's message and the whole answer are written to `conversation/add` once, as session `<agent>:<magpie session>`. The kernel extracts L1 memories from them every few conversations, then L2 scenes and the L3 core.
 - **Fails open.** A kernel that is down, slow or refusing costs that request its memory and nothing else; a failed recall is tried again after a minute.
 - **Changes nothing else.** `model`, `tools`, `tool_choice` and `stream` stay as they came (magpie doesn't let a hook change them either).
@@ -123,7 +123,7 @@ Gemini CLI · Cursor · Copilot …（模型不经 magpie）
 ### 功能
 
 - **每轮召回一次**：与 TDAI 自带的 Hermes 适配器相同，并行调用 `atomic/search`（以本轮输入为 query 检索 L1 记忆）、`core/read`（L3 核心）和 `scenario/ls`（L2 场景列表），拼成一个 `<tdai-memory>` 块，放在本轮用户消息的开头（tool_result 之后）。
-- **不破坏 prompt cache**：每轮的块按会话缓存，之后每次请求原样插回原位置，agent 发出的历史逐字节不变。插件重载（修改选项、重启 magpie）会清空缓存，此前的轮次不再带块，产生一次 cache miss。
+- **不破坏 prompt cache**：每轮的块按会话缓存，之后每次请求原样插回原位置，agent 发出的历史逐字节不变。插件重载（修改选项、重启 magpie）会清空缓存，此前的轮次不再带块，产生一次 cache miss。召回失败一分钟后会重试：一轮持续超过一分钟时，它的消息会迟到地拿到自己的块，这是历史字节变化的另一处罕见情况。
 - **归档需手动开启**：一轮工具循环中的文字回复先攒着，等这一轮结束（`end_turn`，没有待执行的工具调用）才把用户消息和完整回答写一次 `conversation/add`，会话 ID 为 `<agent>:<magpie 会话>`。内核每隔几轮对话抽取一次 L1 记忆，再生成 L2 场景和 L3 核心。
 - **失败放行**：内核不可用、超时或拒绝时，只是这次请求不带记忆，请求照常发出；召回失败一分钟后再重试。
 - **不改其他字段**：`model`、`tools`、`tool_choice`、`stream` 保持原样（magpie 本身也不允许 hook 修改）。

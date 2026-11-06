@@ -1,12 +1,18 @@
 {
   "name": "magpie-tdai-memory",
   "version": "0.1.0",
-  "description": "Shared long-term memory for every agent behind magpie, straight from the TDAI (TencentDB Agent Memory) memory-core kernel: recall put before each turn, finished turns captured to L0, search tools for any agent",
+  "description": "Shared long-term memory for every agent behind magpie from your own TencentDB Agent Memory (TDAI) memory-core, with no proxy: recall before each turn, and opt-in capture of finished turns and memory tools",
   "type": "module",
   "main": "./index.mjs",
   "files": ["index.mjs", "lib.mjs", "tdai-memory.hooks.mjs", "README.md", "LICENSE"],
   "keywords": ["magpie", "magpie-gateway", "tdai", "tencentdb-agent-memory", "agent-memory", "memory", "llm-gateway"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ethanfly/magpie-tdai-memory.git"
+  },
+  "homepage": "https://github.com/ethanfly/magpie-tdai-memory#readme",
+  "bugs": "https://github.com/ethanfly/magpie-tdai-memory/issues",
   "scripts": { "test": "node --test" },
   "magpie": {
     "hooks": "./tdai-memory.hooks.mjs",
